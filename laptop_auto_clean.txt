@@ -1,0 +1,299 @@
+# ============================================
+# Laptop Auto Maintenance - One Click Setup
+# সব কিছু অটোমেটিক্যালি সেটআপ হবে
+# ============================================
+
+# Administrator অধিকার চেক ও অটো রিস্টার্ট
+if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Host "Administrator অধিকার দরকার। অটো স্টার্ট হচ্ছে..." -ForegroundColor Yellow
+    Start-Process powershell.exe "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    exit
+}
+
+# ===== সেটআপ শুরু =====
+Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║  Laptop Auto Maintenance Setup        ║" -ForegroundColor Cyan
+Write-Host "║  সব কিছু অটোমেটিক্যালি হবে           ║" -ForegroundColor Cyan
+Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host ""
+
+# Configuration
+$ScriptPath = "$env:ProgramData\LaptopMaintenance"
+$MainScript = "$ScriptPath\MaintenanceService.ps1"
+$LogPath = "$env:USERPROFILE\Documents\LaptopMaintenance"
+$LogFile = "$LogPath\MaintenanceLog.txt"
+$CheckInterval = 1800 # ৩০ মিনিট
+
+# Step 1: ExecutionPolicy সেট করা
+Write-Host "[1/5] ExecutionPolicy সেটআপ করা হচ্ছে..." -ForegroundColor Yellow
+try {
+    Set-ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+    Write-Host "✓ ExecutionPolicy সেট হয়েছে" -ForegroundColor Green
+} catch {
+    Write-Host "⚠ ExecutionPolicy সেট করতে সমস্যা" -ForegroundColor Red
+}
+
+# Step 2: ফোল্ডার তৈরি
+Write-Host "[2/5] প্রয়োজনীয় ফোল্ডার তৈরি করা হচ্ছে..." -ForegroundColor Yellow
+if (!(Test-Path $ScriptPath)) {
+    New-Item -ItemType Directory -Path $ScriptPath -Force | Out-Null
+}
+if (!(Test-Path $LogPath)) {
+    New-Item -ItemType Directory -Path $LogPath -Force | Out-Null
+}
+Write-Host "✓ ফোল্ডার তৈরি হয়েছে" -ForegroundColor Green
+
+# Step 3: মেইন স্ক্রিপ্ট তৈরি
+Write-Host "[3/5] মেইন সার্ভিস স্ক্রিপ্ট তৈরি করা হচ্ছে..." -ForegroundColor Yellow
+
+$ServiceScript = @'
+# ===== Maintenance Service Script =====
+
+$LogPath = "$env:USERPROFILE\Documents\LaptopMaintenance"
+$LogFile = "$LogPath\MaintenanceLog.txt"
+$CheckInterval = 1800
+
+if (!(Test-Path $LogPath)) {
+    New-Item -ItemType Directory -Path $LogPath -Force | Out-Null
+}
+
+function Write-Log {
+    param([string]$Message)
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    try {
+        "$Timestamp - $Message" | Out-File -FilePath $LogFile -Append -Encoding UTF8
+    } catch {}
+}
+
+function Clear-JunkFiles {
+    Write-Log "জাঙ্ক ফাইল পরিষ্কার শুরু..."
+    
+    $TempPaths = @(
+        "$env:TEMP\*",
+        "$env:WINDIR\Temp\*",
+        "$env:LOCALAPPDATA\Temp\*",
+        "$env:USERPROFILE\AppData\Local\Microsoft\Windows\INetCache\*",
+        "$env:WINDIR\Prefetch\*"
+    )
+    
+    foreach ($Path in $TempPaths) {
+        try {
+            Remove-Item -Path $Path -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {}
+    }
+    
+    Write-Log "জাঙ্ক ফাইল পরিষ্কার সম্পন্ন"
+}
+
+function Clear-BrowserCache {
+    Write-Log "ব্রাউজার ক্যাশ পরিষ্কার শুরু..."
+    
+    $ChromeCache = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache\*"
+    Remove-Item -Path $ChromeCache -Recurse -Force -ErrorAction SilentlyContinue
+    
+    $FirefoxPath = "$env:APPDATA\Mozilla\Firefox\Profiles"
+    if (Test-Path $FirefoxPath) {
+        Get-ChildItem -Path $FirefoxPath -Directory | ForEach-Object {
+            Remove-Item -Path "$($_.FullName)\cache2\*" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    
+    $EdgeCache = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache\*"
+    Remove-Item -Path $EdgeCache -Recurse -Force -ErrorAction SilentlyContinue
+    
+    Write-Log "ব্রাউজার ক্যাশ পরিষ্কার সম্পন্ন"
+}
+
+function Clear-WindowsUpdateCache {
+    Write-Log "Windows Update ক্যাশ পরিষ্কার শুরু..."
+    
+    Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "$env:WINDIR\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+    Start-Service -Name wuauserv -ErrorAction SilentlyContinue
+    
+    Write-Log "Windows Update ক্যাশ পরিষ্কার সম্পন্ন"
+}
+
+function Clear-RecycleBin {
+    Write-Log "রিসাইকেল বিন খালি করা হচ্ছে..."
+    Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+    Write-Log "রিসাইকেল বিন খালি করা সম্পন্ন"
+}
+
+function Optimize-Memory {
+    Write-Log "মেমরি অপটিমাইজেশন শুরু..."
+    
+    $Processes = Get-Process | Where-Object {$_.WorkingSet -gt 100MB}
+    foreach ($Process in $Processes) {
+        try {
+            $Process.Refresh()
+        } catch {}
+    }
+    
+    Write-Log "মেমরি অপটিমাইজেশন সম্পন্ন"
+}
+
+function Reset-NetworkCache {
+    Write-Log "নেটওয়ার্ক ক্যাশ রিসেট শুরু..."
+    
+    ipconfig /flushdns | Out-Null
+    
+    Write-Log "নেটওয়ার্ক ক্যাশ রিসেট সম্পন্ন"
+}
+
+function Reset-WindowsStoreCache {
+    Write-Log "Windows Store ক্যাশ রিসেট..."
+    Start-Process "wsreset.exe" -WindowStyle Hidden -ErrorAction SilentlyContinue
+    Write-Log "Windows Store ক্যাশ রিসেট সম্পন্ন"
+}
+
+function Optimize-SSD {
+    Write-Log "SSD অপটিমাইজেশন (TRIM) শুরু..."
+    
+    # সব ড্রাইভ চেক করা
+    $Drives = Get-PhysicalDisk
+    
+    foreach ($Drive in $Drives) {
+        # SSD চেক করা
+        if ($Drive.MediaType -eq "SSD") {
+            Write-Log "SSD পাওয়া গেছে: $($Drive.FriendlyName)"
+            
+            # TRIM কমান্ড চালানো
+            $Volumes = Get-Partition -DiskNumber $Drive.DeviceId | Get-Volume
+            foreach ($Volume in $Volumes) {
+                if ($Volume.DriveLetter) {
+                    Write-Log "TRIM চলছে ড্রাইভ $($Volume.DriveLetter):\ এ..."
+                    Optimize-Volume -DriveLetter $Volume.DriveLetter -ReTrim -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+    
+    Write-Log "SSD অপটিমাইজেশন সম্পন্ন"
+}
+
+function Repair-SystemFiles {
+    Write-Log "সিস্টেম ফাইল চেক শুরু..."
+    
+    Start-Process "DISM" -ArgumentList "/Online /Cleanup-Image /RestoreHealth /Quiet" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+    Start-Process "sfc" -ArgumentList "/scannow" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+    
+    Write-Log "সিস্টেম ফাইল চেক সম্পন্ন"
+}
+
+function Check-DiskSpace {
+    $Drives = Get-PSDrive -PSProvider FileSystem | Where-Object {$_.Used -gt 0}
+    
+    foreach ($Drive in $Drives) {
+        $FreePercent = [math]::Round(($Drive.Free / ($Drive.Used + $Drive.Free)) * 100, 2)
+        
+        if ($FreePercent -lt 10) {
+            Write-Log "সতর্কতা: $($Drive.Name) ড্রাইভে মাত্র $FreePercent% খালি জায়গা আছে!"
+        }
+    }
+}
+
+function Fix-CommonErrors {
+    Write-Log "সাধারণ এরর ফিক্স করা হচ্ছে..."
+    
+    Remove-Item -Path "$env:LOCALAPPDATA\Microsoft\Windows\WER\*" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "$env:ProgramData\Microsoft\Windows Defender\Scans\*" -Recurse -Force -ErrorAction SilentlyContinue
+    
+    Write-Log "এরর ফিক্স সম্পন্ন"
+}
+
+# মেইন লুপ
+Write-Log "=== Laptop Auto Maintenance Service শুরু হয়েছে ==="
+
+$IterationCount = 0
+
+while ($true) {
+    try {
+        $IterationCount++
+        Write-Log "--- Maintenance Cycle #$IterationCount শুরু ---"
+        
+        Clear-JunkFiles
+        
+        if ($IterationCount % 5 -eq 0) {
+            Clear-BrowserCache
+            Clear-WindowsUpdateCache
+            Clear-RecycleBin
+            Optimize-Memory
+            Reset-NetworkCache
+            Fix-CommonErrors
+        }
+        
+        if ($IterationCount % 20 -eq 0) {
+            Reset-WindowsStoreCache
+            Optimize-SSD
+            Repair-SystemFiles
+        }
+        
+        Check-DiskSpace
+        
+        Write-Log "--- Maintenance Cycle #$IterationCount সম্পন্ন ---"
+        
+        Start-Sleep -Seconds $CheckInterval
+        
+    } catch {
+        Write-Log "Error: $($_.Exception.Message)"
+        Start-Sleep -Seconds 60
+    }
+}
+'@
+
+# মেইন স্ক্রিপ্ট সেভ করা
+$ServiceScript | Out-File -FilePath $MainScript -Encoding UTF8 -Force
+Write-Host "✓ মেইন স্ক্রিপ্ট তৈরি হয়েছে" -ForegroundColor Green
+
+# Step 4: Task Scheduler এ যুক্ত করা
+Write-Host "[4/5] Windows Task Scheduler এ যুক্ত করা হচ্ছে..." -ForegroundColor Yellow
+
+# পুরানো Task মুছে ফেলা
+try {
+    Unregister-ScheduledTask -TaskName "LaptopAutoMaintenance" -Confirm:$false -ErrorAction SilentlyContinue
+} catch {}
+
+# নতুন Task তৈরি
+$Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$MainScript`""
+$Trigger = New-ScheduledTaskTrigger -AtStartup
+$Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+
+try {
+    Register-ScheduledTask -TaskName "LaptopAutoMaintenance" -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description "Laptop Auto Maintenance Background Service" -Force | Out-Null
+    Write-Host "✓ Task Scheduler এ যুক্ত হয়েছে" -ForegroundColor Green
+} catch {
+    Write-Host "⚠ Task Scheduler এ যুক্ত করতে সমস্যা: $_" -ForegroundColor Red
+}
+
+# Step 5: এখনই Task শুরু করা
+Write-Host "[5/5] সার্ভিস শুরু করা হচ্ছে..." -ForegroundColor Yellow
+
+try {
+    Start-ScheduledTask -TaskName "LaptopAutoMaintenance"
+    Write-Host "✓ সার্ভিস শুরু হয়েছে" -ForegroundColor Green
+} catch {
+    Write-Host "⚠ সার্ভিস শুরু করতে সমস্যা" -ForegroundColor Red
+}
+
+# সম্পন্ন বার্তা
+Write-Host ""
+Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Green
+Write-Host "║        সেটআপ সম্পন্ন হয়েছে!          ║" -ForegroundColor Green
+Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host ""
+Write-Host "✓ স্ক্রিপ্ট লোকেশন: $MainScript" -ForegroundColor Cyan
+Write-Host "✓ লগ ফাইল লোকেশন: $LogFile" -ForegroundColor Cyan
+Write-Host "✓ প্রতি ৩০ মিনিট পর পর অটো মেইনটেনেন্স হবে" -ForegroundColor Cyan
+Write-Host "✓ Windows স্টার্টআপে অটো শুরু হবে" -ForegroundColor Cyan
+Write-Host "✓ ব্যাকগ্রাউন্ডে নীরবে কাজ করবে" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "📌 টিপস:" -ForegroundColor Yellow
+Write-Host "   - লগ দেখতে: notepad $LogFile" -ForegroundColor White
+Write-Host "   - সার্ভিস বন্ধ করতে Task Scheduler খুলে 'LaptopAutoMaintenance' মুছে দিন" -ForegroundColor White
+Write-Host "   - সার্ভিস চালু আছে কিনা দেখতে: Get-ScheduledTask -TaskName 'LaptopAutoMaintenance'" -ForegroundColor White
+Write-Host ""
+Write-Host "৫ সেকেন্ড পর এই উইন্ডো বন্ধ হবে..." -ForegroundColor Gray
+
+Start-Sleep -Seconds 5
